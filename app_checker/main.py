@@ -2,27 +2,43 @@
 
 import argparse
 import asyncio
-import json
+import logging
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
+from .constants import DEFAULT_DATA_DIR
+from .logging_config import get_logger, setup_logging
 from .models import App, AppSource
-from .checkers import WingetChecker, GitHubChecker, CustomChecker
-from .utils import (
-    add_app,
-    load_apps,
-    save_apps,
-    ensure_data_dir,
-)
-from .tui import UpdateCheckerApp
+from .service import get_service
+from .utils import add_app, ensure_data_dir, is_update_available, load_apps, save_apps
+
+logger = get_logger(__name__)
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
         description="Check for updates to installed applications",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    
+    parser.add_argument(
+        "--verbose", "-V",
+        action="store_true",
+        help="Enable verbose logging",
+    )
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        help="Log file path",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=DEFAULT_DATA_DIR,
+        help="Data directory path",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -34,6 +50,7 @@ def main():
     scan_parser.set_defaults(func=run_scan)
 
     check_parser = subparsers.add_parser("check", help="Check for updates (non-interactive)")
+    check_parser.add_argument("--json", action="store_true", help="Output as JSON")
     check_parser.set_defaults(func=run_check)
 
     add_parser = subparsers.add_parser("add", help="Add a new app to track")
@@ -52,9 +69,22 @@ def main():
     add_parser.set_defaults(func=run_add)
 
     list_parser = subparsers.add_parser("list", help="List tracked apps")
+    list_parser.add_argument("--json", action="store_true", help="Output as JSON")
     list_parser.set_defaults(func=run_list)
 
+    update_parser = subparsers.add_parser("update", help="Update app version")
+    update_parser.add_argument("--id", required=True, help="App ID")
+    update_parser.add_argument("--installed-version", "-v", required=True, help="New installed version")
+    update_parser.set_defaults(func=run_update)
+
+    delete_parser = subparsers.add_parser("delete", help="Delete an app")
+    delete_parser.add_argument("--id", required=True, help="App ID")
+    delete_parser.set_defaults(func=run_delete)
+
     args = parser.parse_args()
+
+    log_level = logging.DEBUG if getattr(args, "verbose", False) else logging.INFO
+    setup_logging(level=log_level, log_file=getattr(args, "log_file", None))
 
     ensure_data_dir()
 
@@ -66,18 +96,21 @@ def main():
         parser.print_help()
 
 
-def run_tui():
+def run_tui(args=None) -> None:
     """Run the interactive TUI."""
+    from .tui import UpdateCheckerApp
+    
+    logger.debug("Starting TUI")
     app = UpdateCheckerApp()
     app.run()
 
 
-def run_scan(args):
+def run_scan(args) -> None:
     """Scan for installed apps using winget."""
     print("Scanning for installed applications...")
     
-    checker = WingetChecker()
-    apps = asyncio.run(checker.scan_installed_apps())
+    service = get_service()
+    apps = asyncio.run(service.scan_installed_apps())
 
     if not apps:
         print("No apps found or winget not available.")
@@ -109,9 +142,10 @@ def run_scan(args):
         print(f"  {status} {app_data['name']} ({winget_id}) - v{app_data.get('installed_version', 'unknown')}")
 
     print(f"\nAdded {new_count} new apps to tracking.")
+    logger.info("Scan complete: %d apps found, %d new", len(apps), new_count)
 
 
-def run_check(args):
+def run_check(args) -> None:
     """Check for updates (non-interactive)."""
     apps = load_apps()
 
@@ -121,63 +155,58 @@ def run_check(args):
 
     print(f"Checking {len(apps)} apps for updates...\n")
 
-    winget_checker = WingetChecker()
-    github_checker = GitHubChecker()
-    custom_checker = CustomChecker()
+    service = get_service()
+    updates_available: list[App] = []
 
-    updates_available = []
+    def progress_callback(app: App, info, index: int, total: int) -> None:
+        if app.ignored:
+            return
 
-    async def check_all():
-        for app in apps:
-            if app.ignored:
-                continue
-
-            print(f"  Checking {app.name}...", end=" ")
-
-            if app.source == AppSource.WINGET:
-                info = await winget_checker.check(app)
-            elif app.source == AppSource.GITHUB:
-                info = await github_checker.check(app)
-            elif app.source == AppSource.CUSTOM:
-                info = await custom_checker.check(app)
+        if info.error:
+            print(f"  [{index}/{total}] {app.name}... [ERROR] {info.error}")
+        elif info.latest_version:
+            if app.installed_version and info.latest_version != app.installed_version:
+                print(f"  [{index}/{total}] {app.name}... [UPDATE] {app.installed_version} -> {info.latest_version}")
+                updates_available.append(app)
             else:
-                info = None
+                print(f"  [{index}/{total}] {app.name}... [OK] {info.latest_version}")
+        else:
+            print(f"  [{index}/{total}] {app.name}... [UNKNOWN]")
 
-            if info:
-                app.latest_version = info.latest_version
-                app.release_url = info.release_url
-                app.last_error = info.error
-                app.last_checked = datetime.now().isoformat()
-
-                if info.error:
-                    print(f"[ERROR] {info.error}")
-                elif info.latest_version:
-                    if app.installed_version and info.latest_version != app.installed_version:
-                        print(f"[UPDATE] {app.installed_version} -> {info.latest_version}")
-                        updates_available.append(app)
-                    else:
-                        print(f"[OK] {info.latest_version}")
-                else:
-                    print("[UNKNOWN]")
-            else:
-                print("[ERROR] Could not check")
-
-        save_apps(apps)
+    async def check_all() -> list[App]:
+        return await service.check_and_update(apps)
 
     asyncio.run(check_all())
 
-    print(f"\n{'='*50}")
-    if updates_available:
-        print(f"\n{len(updates_available)} updates available:\n")
-        for app in updates_available:
-            print(f"  • {app.name}: {app.installed_version} -> {app.latest_version}")
-            if app.release_url:
-                print(f"    {app.release_url}")
+    if getattr(args, "json", False):
+        import json as json_module
+        output = {
+            "updates_available": [
+                {
+                    "name": app.name,
+                    "installed_version": app.installed_version,
+                    "latest_version": app.latest_version,
+                    "release_url": app.release_url,
+                }
+                for app in updates_available
+            ],
+            "total_apps": len(apps),
+            "updates_count": len(updates_available),
+        }
+        print(json_module.dumps(output, indent=2))
     else:
-        print("\nAll apps are up to date!")
+        print(f"\n{'='*50}")
+        if updates_available:
+            print(f"\n{len(updates_available)} updates available:\n")
+            for app in updates_available:
+                print(f"  • {app.name}: {app.installed_version} -> {app.latest_version}")
+                if app.release_url:
+                    print(f"    {app.release_url}")
+        else:
+            print("\nAll apps are up to date!")
 
 
-def run_add(args):
+def run_add(args) -> None:
     """Add a new app to track."""
     app_data = {
         "name": args.name,
@@ -215,9 +244,10 @@ def run_add(args):
 
     version_info = f" (v{args.installed_version})" if args.installed_version else ""
     print(f"Added '{app.name}'{version_info} to tracking.")
+    logger.info("Added app: %s (%s)", app.name, app.source.value)
 
 
-def run_list(args):
+def run_list(args) -> None:
     """List tracked apps."""
     apps = load_apps()
 
@@ -225,18 +255,58 @@ def run_list(args):
         print("No apps configured.")
         return
 
-    print(f"\nTracked applications ({len(apps)}):\n")
-    print(f"{'Name':<30} {'Source':<10} {'Installed':<15} {'Latest':<15} {'Status':<10}")
-    print("-" * 80)
+    if getattr(args, "json", False):
+        import json as json_module
+        output = {
+            "apps": [app.to_dict() for app in apps],
+            "count": len(apps),
+        }
+        print(json_module.dumps(output, indent=2))
+    else:
+        print(f"\nTracked applications ({len(apps)}):\n")
+        print(f"{'Name':<30} {'Source':<10} {'Installed':<15} {'Latest':<15} {'Status':<10}")
+        print("-" * 80)
 
+        for app in apps:
+            status = app.status.value
+            installed = app.installed_version or "unknown"
+            latest = app.latest_version or "unknown"
+
+            print(f"{app.name[:28]:<30} {app.source.value:<10} {installed:<15} {latest:<15} {status:<10}")
+
+        print()
+
+
+def run_update(args) -> None:
+    """Update an app's installed version."""
+    apps = load_apps()
+    
     for app in apps:
-        status = app.status.value
-        installed = app.installed_version or "unknown"
-        latest = app.latest_version or "unknown"
+        if app.id == args.id:
+            app.installed_version = args.installed_version
+            save_apps(apps)
+            print(f"Updated '{app.name}' to version {args.installed_version}")
+            logger.info("Updated app %s to version %s", app.name, args.installed_version)
+            return
+    
+    print(f"Error: App with ID '{args.id}' not found")
+    sys.exit(1)
 
-        print(f"{app.name[:28]:<30} {app.source.value:<10} {installed:<15} {latest:<15} {status:<10}")
 
-    print()
+def run_delete(args) -> None:
+    """Delete an app."""
+    apps = load_apps()
+    
+    for app in apps:
+        if app.id == args.id:
+            apps = [a for a in apps if a.id != args.id]
+            save_apps(apps)
+            print(f"Deleted '{app.name}'")
+            logger.info("Deleted app: %s", app.name)
+            return
+    
+    print(f"Error: App with ID '{args.id}' not found")
+    sys.exit(1)
 
 
 if __name__ == "__main__":

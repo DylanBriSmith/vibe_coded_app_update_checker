@@ -1,0 +1,53 @@
+{
+  "apps": [
+    {
+      "id": "64e88a0f-beab-4a87-a815-cdae865f2f3f",
+      "name": "Obsidian",
+      "source": "github",
+      "installed_version": null,
+      "latest_version": "1.11.7",
+      "ignored": false,
+      "last_checked": "2026-02-20T15:40:31.985492",
+      "last_error": null,
+      "release_url": "https://github.com/obsidianmd/obsidian-releases/releases/tag/v1.11.7",
+      "added_at": "2026-02-20T12:27:47.486315",
+      "winget_id": null,
+      "github_repo": "obsidianmd/obsidian-releases",
+      "custom_url": null,
+      "version_regex": null
+    },
+    {
+      "id": "f8cda147-311f-4fc4-a6de-916e7524fabf",
+      "name": "7-Zip",
+      "source": "custom",
+      "installed_version": null,
+      "latest_version": "26.00",
+      "ignored": false,
+      "last_checked": "2026-02-20T15:40:31.985500",
+      "last_error": null,
+      "release_url": "https://www.7-zip.org/download.html",
+      "added_at": "2026-02-20T12:28:17.882716",
+      "winget_id": null,
+      "github_repo": null,
+      "custom_url": "https://www.7-zip.org/download.html",
+      "version_regex": "7-Zip (\\d+\\.\\d+)"
+    },
+    {
+      "id": "6946e825-211b-4651-ae4b-ad4b89887994",
+      "name": "ShareX",
+      "source": "github",
+      "installed_version": "15.0.0",
+      "latest_version": "19.0.2",
+      "ignored": false,
+      "last_checked": "2026-02-20T15:40:31.985503",
+      "last_error": null,
+      "release_url": "https://github.com/ShareX/ShareX/releases/tag/v19.0.2",
+      "added_at": "2026-02-20T14:10:23.809849",
+      "winget_id": null,
+      "github_repo": "ShareX/ShareX",
+      "custom_url": null,
+      "version_regex": null
+    }
+  ],
+  "last_updated": "2026-02-20T15:40:31.985856"
+}

@@ -5,20 +5,22 @@ from typing import Optional
 
 import httpx
 
+from ..constants import (
+    CUSTOM_URL_TIMEOUT,
+    DEFAULT_USER_AGENT,
+    DEFAULT_VERSION_PATTERNS,
+    MAX_DETECTED_PATTERNS,
+    MAX_UNIQUE_MATCHES,
+)
+from ..logging_config import get_logger
 from ..models import App, AppSource, UpdateInfo
 from .base import BaseChecker
+
+logger = get_logger(__name__)
 
 
 class CustomChecker(BaseChecker):
     """Check for updates using custom URL and regex pattern."""
-
-    DEFAULT_VERSION_PATTERNS = [
-        r"[Vv]ersion[:\s]+(\d+(?:\.\d+)*)",
-        r"[Vv](\d+(?:\.\d+)+)",
-        r"[Ll]atest[:\s]+(\d+(?:\.\d+)*)",
-        r"(\d+\.\d+\.\d+(?:-[a-zA-Z0-9]+)?)",
-        r"(\d+\.\d+)",
-    ]
 
     @property
     def source_type(self) -> str:
@@ -68,12 +70,15 @@ class CustomChecker(BaseChecker):
                 installed_version=app.installed_version
             )
         except httpx.HTTPStatusError as e:
+            error_msg = f"HTTP error: {e.response.status_code}"
+            logger.error("HTTP error fetching %s: %s", app.custom_url, error_msg)
             return UpdateInfo(
                 latest_version=None,
-                error=f"HTTP error: {e.response.status_code}",
+                error=error_msg,
                 installed_version=app.installed_version
             )
         except Exception as e:
+            logger.exception("Error checking %s", app.custom_url)
             return UpdateInfo(
                 latest_version=None,
                 error=str(e),
@@ -90,13 +95,24 @@ class CustomChecker(BaseChecker):
             Page content as string, or None if failed.
         """
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": DEFAULT_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
         
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            return response.text
+        try:
+            async with httpx.AsyncClient(
+                timeout=CUSTOM_URL_TIMEOUT,
+                follow_redirects=True,
+                max_redirects=10,
+            ) as client:
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+                return response.text
+        except httpx.HTTPStatusError:
+            raise
+        except Exception as e:
+            logger.error("Error fetching %s: %s", url, e)
+            return None
 
     def _extract_with_regex(self, content: str, pattern: str) -> Optional[str]:
         """Extract version using a specific regex pattern.
@@ -110,10 +126,10 @@ class CustomChecker(BaseChecker):
         """
         try:
             match = re.search(pattern, content, re.IGNORECASE)
-            if match:
+            if match and match.groups():
                 return match.group(1)
-        except re.error:
-            pass
+        except re.error as e:
+            logger.error("Invalid regex pattern '%s': %s", pattern, e)
         return None
 
     def _auto_detect_version(self, content: str) -> Optional[str]:
@@ -125,9 +141,9 @@ class CustomChecker(BaseChecker):
         Returns:
             First detected version string, or None if not found.
         """
-        for pattern in self.DEFAULT_VERSION_PATTERNS:
+        for pattern in DEFAULT_VERSION_PATTERNS:
             match = re.search(pattern, content, re.IGNORECASE)
-            if match:
+            if match and match.groups():
                 return match.group(1)
         return None
 
@@ -145,12 +161,12 @@ class CustomChecker(BaseChecker):
             if not content:
                 return []
 
-            patterns_found = []
+            patterns_found: list[dict] = []
             
-            for pattern in self.DEFAULT_VERSION_PATTERNS:
+            for pattern in DEFAULT_VERSION_PATTERNS:
                 matches = re.findall(pattern, content, re.IGNORECASE)
                 if matches:
-                    unique_matches = list(set(matches))[:5]
+                    unique_matches = list(set(matches))[:MAX_UNIQUE_MATCHES]
                     patterns_found.append({
                         "pattern": pattern,
                         "examples": unique_matches,
@@ -158,9 +174,10 @@ class CustomChecker(BaseChecker):
                     })
 
             patterns_found.sort(key=lambda x: x["count"], reverse=True)
-            return patterns_found[:10]
+            return patterns_found[:MAX_DETECTED_PATTERNS]
             
-        except Exception:
+        except Exception as e:
+            logger.error("Error detecting patterns from %s: %s", url, e)
             return []
 
     async def test_custom_checker(

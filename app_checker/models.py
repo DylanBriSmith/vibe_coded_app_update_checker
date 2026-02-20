@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional, cast
 import uuid
 
 
@@ -24,9 +24,9 @@ class AppStatus(Enum):
 
 @dataclass
 class App:
-    id: str
-    name: str
-    source: AppSource
+    id: str = field(default="")
+    name: str = ""
+    source: AppSource = field(default=AppSource.CUSTOM)
     installed_version: Optional[str] = None
     latest_version: Optional[str] = None
     ignored: bool = False
@@ -40,10 +40,10 @@ class App:
     custom_url: Optional[str] = None
     version_regex: Optional[str] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.id:
             self.id = str(uuid.uuid4())
-        if not self.added_at:
+        if self.added_at is None:
             self.added_at = datetime.now().isoformat()
 
     @property
@@ -60,7 +60,7 @@ class App:
             return AppStatus.UPDATE_AVAILABLE
         return AppStatus.OK
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "name": self.name,
@@ -79,28 +79,49 @@ class App:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "App":
+    def from_dict(cls, data: dict[str, Any]) -> "App":
+        source_raw = data.get("source", "custom")
+        if isinstance(source_raw, str):
+            try:
+                source = AppSource(source_raw)
+            except ValueError:
+                source = AppSource.CUSTOM
+        else:
+            source = AppSource.CUSTOM
+
+        def _get_str(key: str) -> Optional[str]:
+            val = data.get(key)
+            if isinstance(val, str):
+                return val
+            return None
+
+        def _get_bool(key: str, default: bool = False) -> bool:
+            val = data.get(key)
+            if isinstance(val, bool):
+                return val
+            return default
+
         return cls(
-            id=data.get("id", str(uuid.uuid4())),
-            name=data["name"],
-            source=AppSource(data["source"]),
-            installed_version=data.get("installed_version"),
-            latest_version=data.get("latest_version"),
-            ignored=data.get("ignored", False),
-            last_checked=data.get("last_checked"),
-            last_error=data.get("last_error"),
-            release_url=data.get("release_url"),
-            added_at=data.get("added_at"),
-            winget_id=data.get("winget_id"),
-            github_repo=data.get("github_repo"),
-            custom_url=data.get("custom_url"),
-            version_regex=data.get("version_regex"),
+            id=_get_str("id") or str(uuid.uuid4()),
+            name=_get_str("name") or "",
+            source=source,
+            installed_version=_get_str("installed_version"),
+            latest_version=_get_str("latest_version"),
+            ignored=_get_bool("ignored", False),
+            last_checked=_get_str("last_checked"),
+            last_error=_get_str("last_error"),
+            release_url=_get_str("release_url"),
+            added_at=_get_str("added_at"),
+            winget_id=_get_str("winget_id"),
+            github_repo=_get_str("github_repo"),
+            custom_url=_get_str("custom_url"),
+            version_regex=_get_str("version_regex"),
         )
 
 
 @dataclass
 class UpdateInfo:
-    latest_version: Optional[str]
+    latest_version: Optional[str] = None
     release_url: Optional[str] = None
     error: Optional[str] = None
     installed_version: Optional[str] = None

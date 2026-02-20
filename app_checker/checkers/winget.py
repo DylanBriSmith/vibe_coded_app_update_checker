@@ -2,11 +2,16 @@
 
 import asyncio
 import json
+import re
 import shutil
-from typing import Optional
+from typing import Any, Optional
 
+from ..constants import WINGET_TIMEOUT, WINGET_SEARCH_TIMEOUT
+from ..logging_config import get_logger
 from ..models import App, AppSource, UpdateInfo
 from .base import BaseChecker
+
+logger = get_logger(__name__)
 
 
 class WingetChecker(BaseChecker):
@@ -34,6 +39,13 @@ class WingetChecker(BaseChecker):
                 error="No winget_id configured for this app"
             )
 
+        if not self._is_winget_available():
+            return UpdateInfo(
+                latest_version=None,
+                error="Winget is not available on this system",
+                installed_version=app.installed_version
+            )
+
         try:
             result = await self._run_winget_show(app.winget_id)
             if result:
@@ -44,16 +56,25 @@ class WingetChecker(BaseChecker):
                 )
             return UpdateInfo(
                 latest_version=None,
-                error="Could not fetch winget info"
+                error="Could not fetch winget info",
+                installed_version=app.installed_version
+            )
+        except asyncio.TimeoutError:
+            logger.error("Timeout checking %s via winget", app.winget_id)
+            return UpdateInfo(
+                latest_version=None,
+                error="Timeout while checking winget",
+                installed_version=app.installed_version
             )
         except Exception as e:
+            logger.exception("Error checking %s via winget", app.winget_id)
             return UpdateInfo(
                 latest_version=None,
                 error=str(e),
                 installed_version=app.installed_version
             )
 
-    async def _run_winget_show(self, winget_id: str) -> Optional[dict]:
+    async def _run_winget_show(self, winget_id: str) -> Optional[dict[str, Optional[str]]]:
         """Run winget show to get package info.
         
         Args:
@@ -62,9 +83,6 @@ class WingetChecker(BaseChecker):
         Returns:
             Dict with version and homepage, or None if failed.
         """
-        if not self._is_winget_available():
-            return None
-
         try:
             proc = await asyncio.create_subprocess_exec(
                 "winget", "show", "--id", winget_id, "--source", "winget",
@@ -72,20 +90,26 @@ class WingetChecker(BaseChecker):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=WINGET_SEARCH_TIMEOUT
+            )
             
             if proc.returncode != 0:
+                logger.debug("Winget show returned %d for %s", proc.returncode, winget_id)
                 return None
             
             output = stdout.decode("utf-8", errors="ignore")
             return self._parse_winget_show_output(output)
             
         except asyncio.TimeoutError:
-            return None
-        except Exception:
+            logger.warning("Winget show timed out for %s", winget_id)
+            raise
+        except Exception as e:
+            logger.error("Winget show error for %s: %s", winget_id, e)
             return None
 
-    def _parse_winget_show_output(self, output: str) -> Optional[dict]:
+    def _parse_winget_show_output(self, output: str) -> Optional[dict[str, Optional[str]]]:
         """Parse winget show output to extract version and homepage.
         
         Args:
@@ -94,8 +118,8 @@ class WingetChecker(BaseChecker):
         Returns:
             Dict with version and homepage.
         """
-        version = None
-        homepage = None
+        version: Optional[str] = None
+        homepage: Optional[str] = None
         
         for line in output.split("\n"):
             line = line.strip()
@@ -112,13 +136,14 @@ class WingetChecker(BaseChecker):
         """Check if winget is available on the system."""
         return shutil.which("winget") is not None
 
-    async def scan_installed_apps(self) -> list[dict]:
+    async def scan_installed_apps(self) -> list[dict[str, str]]:
         """Scan system for installed apps using winget.
         
         Returns:
             List of dicts with app info (name, id, version).
         """
         if not self._is_winget_available():
+            logger.warning("Winget not available for scanning")
             return []
 
         try:
@@ -128,20 +153,28 @@ class WingetChecker(BaseChecker):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=WINGET_TIMEOUT
+            )
             
             if proc.returncode != 0:
+                logger.warning("Winget list returned %d", proc.returncode)
                 return []
             
             output = stdout.decode("utf-8", errors="ignore")
-            return self._parse_winget_list_output(output)
+            apps = self._parse_winget_list_output(output)
+            logger.info("Scanned %d installed apps", len(apps))
+            return apps
             
         except asyncio.TimeoutError:
+            logger.error("Winget list timed out")
             return []
-        except Exception:
+        except Exception as e:
+            logger.exception("Error scanning installed apps: %s", e)
             return []
 
-    def _parse_winget_list_output(self, output: str) -> list[dict]:
+    def _parse_winget_list_output(self, output: str) -> list[dict[str, str]]:
         """Parse winget list JSON output.
         
         Args:
@@ -152,7 +185,7 @@ class WingetChecker(BaseChecker):
         """
         try:
             data = json.loads(output)
-            apps = []
+            apps: list[dict[str, str]] = []
             
             for source in data.get("Sources", []):
                 for pkg in source.get("Packages", []):
@@ -164,10 +197,96 @@ class WingetChecker(BaseChecker):
                     })
                     
             return apps
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.error("Failed to parse winget list output: %s", e)
             return []
 
-    async def check_for_updates(self) -> list[dict]:
+    async def search_winget(self, query: str) -> list[dict[str, str]]:
+        """Search winget for packages.
+        
+        Args:
+            query: Search query.
+            
+        Returns:
+            List of matching packages with name and id.
+        """
+        if not self._is_winget_available():
+            return []
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "winget", "search", query, "--source", "winget",
+                "--accept-source-agreements",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=WINGET_SEARCH_TIMEOUT
+            )
+            
+            if proc.returncode != 0:
+                return []
+            
+            output = stdout.decode("utf-8", errors="ignore")
+            return self._parse_winget_search_output(output)
+            
+        except asyncio.TimeoutError:
+            logger.warning("Winget search timed out for: %s", query)
+            return []
+        except Exception as e:
+            logger.error("Winget search error: %s", e)
+            return []
+
+    def _parse_winget_search_output(self, output: str) -> list[dict[str, str]]:
+        """Parse winget search output.
+        
+        Args:
+            output: Raw winget search output.
+            
+        Returns:
+            List of dicts with name and id.
+        """
+        results: list[dict[str, str]] = []
+        lines = output.split("\n")
+        
+        header_found = False
+        for line in lines:
+            line = line.strip()
+            
+            if not line:
+                continue
+            
+            if line.startswith("Name") and "Id" in line:
+                header_found = True
+                continue
+            
+            if line.startswith("-"):
+                continue
+            
+            if not header_found:
+                continue
+            
+            parts = line.split()
+            if len(parts) >= 2:
+                name_parts = []
+                id_part = ""
+                
+                for i, part in enumerate(parts):
+                    if re.match(r'^[A-Za-z0-9]+\.[A-Za-z0-9.]+$', part):
+                        id_part = part
+                        name_parts = parts[:i]
+                        break
+                
+                if id_part and name_parts:
+                    results.append({
+                        "name": " ".join(name_parts),
+                        "id": id_part
+                    })
+        
+        return results[:10]
+
+    async def check_for_updates(self) -> list[dict[str, str]]:
         """Check all installed apps for available updates.
         
         Returns:
@@ -183,7 +302,10 @@ class WingetChecker(BaseChecker):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=WINGET_TIMEOUT
+            )
             
             if proc.returncode != 0:
                 return []
@@ -192,11 +314,13 @@ class WingetChecker(BaseChecker):
             return self._parse_winget_upgrade_output(output)
             
         except asyncio.TimeoutError:
+            logger.error("Winget upgrade check timed out")
             return []
-        except Exception:
+        except Exception as e:
+            logger.exception("Error checking for updates: %s", e)
             return []
 
-    def _parse_winget_upgrade_output(self, output: str) -> list[dict]:
+    def _parse_winget_upgrade_output(self, output: str) -> list[dict[str, str]]:
         """Parse winget upgrade output to find apps with updates.
         
         Args:
@@ -205,7 +329,7 @@ class WingetChecker(BaseChecker):
         Returns:
             List of dicts with update info.
         """
-        updates = []
+        updates: list[dict[str, str]] = []
         lines = output.split("\n")
         
         for line in lines:
