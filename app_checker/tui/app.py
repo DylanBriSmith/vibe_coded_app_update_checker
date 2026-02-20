@@ -8,7 +8,7 @@ from textual.app import App
 from textual.containers import Container
 from textual.css.query import NoMatches
 
-from ..models import App, AppSource, UpdateInfo
+from ..models import App as TrackedApp, AppSource, UpdateInfo
 from ..checkers import WingetChecker, GitHubChecker, CustomChecker
 from ..utils import load_apps, save_apps
 from .screens import MainScreen, AddAppScreen, DetailScreen
@@ -168,7 +168,7 @@ class UpdateCheckerApp(App):
     def on_mount(self) -> None:
         self.push_screen("main")
 
-    async def check_app(self, app: App) -> UpdateInfo:
+    async def check_app(self, app: TrackedApp) -> UpdateInfo:
         """Check a single app for updates.
 
         Args:
