@@ -97,7 +97,7 @@ class UpdateCheckerApp(App):
 
     .button-row {
         layout: horizontal;
-        justify-content: right;
+        align-horizontal: right;
         margin-top: 1;
         height: auto;
     }
