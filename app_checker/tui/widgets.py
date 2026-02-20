@@ -164,48 +164,48 @@ class StatusBar(Static):
 class AppDetail(Widget):
     """Widget to display app details."""
 
-    app: App | None = None
+    tracked_app: App | None = None
 
-    def __init__(self, app: App | None = None, **kwargs):
+    def __init__(self, tracked_app: App | None = None, **kwargs):
         super().__init__(**kwargs)
-        self.app = app
+        self.tracked_app = tracked_app
 
     def compose(self) -> ComposeResult:
-        if self.app:
+        if self.tracked_app:
             yield self._build_detail_content()
         else:
             yield Label("No app selected", classes="detail-empty")
 
     def _build_detail_content(self) -> Container:
-        if not self.app:
+        if not self.tracked_app:
             return Container(Label("No app"))
 
         lines = [
-            f"[bold]{self.app.name}[/bold]",
+            f"[bold]{self.tracked_app.name}[/bold]",
             "",
-            f"Source: {self.app.source.value.upper()}",
-            f"Installed: {self.app.installed_version or 'Unknown'}",
-            f"Latest: {self.app.latest_version or 'Unknown'}",
+            f"Source: {self.tracked_app.source.value.upper()}",
+            f"Installed: {self.tracked_app.installed_version or 'Unknown'}",
+            f"Latest: {self.tracked_app.latest_version or 'Unknown'}",
             f"Status: {self._get_status_display()}",
             "",
         ]
 
-        if self.app.source == AppSource.WINGET:
-            lines.append(f"Winget ID: {self.app.winget_id}")
-        elif self.app.source == AppSource.GITHUB:
-            lines.append(f"GitHub Repo: {self.app.github_repo}")
-        elif self.app.source == AppSource.CUSTOM:
-            lines.append(f"Custom URL: {self.app.custom_url}")
-            if self.app.version_regex:
-                lines.append(f"Version Regex: {self.app.version_regex}")
+        if self.tracked_app.source == AppSource.WINGET:
+            lines.append(f"Winget ID: {self.tracked_app.winget_id}")
+        elif self.tracked_app.source == AppSource.GITHUB:
+            lines.append(f"GitHub Repo: {self.tracked_app.github_repo}")
+        elif self.tracked_app.source == AppSource.CUSTOM:
+            lines.append(f"Custom URL: {self.tracked_app.custom_url}")
+            if self.tracked_app.version_regex:
+                lines.append(f"Version Regex: {self.tracked_app.version_regex}")
 
-        if self.app.release_url:
+        if self.tracked_app.release_url:
             lines.append("")
-            lines.append(f"Release URL: {self.app.release_url}")
+            lines.append(f"Release URL: {self.tracked_app.release_url}")
 
-        if self.app.last_error:
+        if self.tracked_app.last_error:
             lines.append("")
-            lines.append(f"[red]Error: {self.app.last_error}[/red]")
+            lines.append(f"[red]Error: {self.tracked_app.last_error}[/red]")
 
         return Container(
             Static("\n".join(lines), classes="detail-content"),
@@ -213,10 +213,10 @@ class AppDetail(Widget):
         )
 
     def _get_status_display(self) -> str:
-        if not self.app:
+        if not self.tracked_app:
             return "Unknown"
 
-        status = self.app.status
+        status = self.tracked_app.status
         if status == AppStatus.OK:
             return "[green]Up to date[/green]"
         elif status == AppStatus.UPDATE_AVAILABLE:
@@ -229,5 +229,5 @@ class AppDetail(Widget):
             return "[magenta]Unknown[/magenta]"
 
     def update_app(self, app: App) -> None:
-        self.app = app
+        self.tracked_app = app
         self.refresh(recompose=True)
