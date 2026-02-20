@@ -191,6 +191,9 @@ class AddAppScreen(ModalScreen):
             yield Label("App Name:")
             yield Input(placeholder="e.g., DaVinci Resolve", id="app-name")
             
+            yield Label("Installed Version (optional):")
+            yield Input(placeholder="e.g., 1.2.3", id="installed-version")
+            
             yield Label("Source Type:")
             with RadioSet(id="source-type"):
                 yield RadioButton("Winget (auto-detect from system)", value=True, id="source-winget")
@@ -334,6 +337,11 @@ class AddAppScreen(ModalScreen):
             "name": name,
             "source": self.selected_source,
         }
+
+        version_input = self.query_one("#installed-version", Input)
+        installed_version = version_input.value.strip()
+        if installed_version:
+            app_data["installed_version"] = installed_version
 
         if self.selected_source == "winget":
             winget_input = self.query_one("#winget-id", Input)

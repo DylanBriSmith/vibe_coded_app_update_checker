@@ -44,6 +44,7 @@ def main():
         required=True,
         help="Source type"
     )
+    add_parser.add_argument("--installed-version", "-v", help="Currently installed version (optional)")
     add_parser.add_argument("--winget-id", help="Winget package ID")
     add_parser.add_argument("--github-repo", help="GitHub repository (owner/repo)")
     add_parser.add_argument("--url", help="Custom URL for version checking")
@@ -183,6 +184,9 @@ def run_add(args):
         "source": args.source,
     }
 
+    if args.installed_version:
+        app_data["installed_version"] = args.installed_version
+
     if args.source == "winget":
         if args.winget_id:
             app_data["winget_id"] = args.winget_id
@@ -209,7 +213,8 @@ def run_add(args):
     app = App.from_dict(app_data)
     add_app(app)
 
-    print(f"Added '{app.name}' to tracking.")
+    version_info = f" (v{args.installed_version})" if args.installed_version else ""
+    print(f"Added '{app.name}'{version_info} to tracking.")
 
 
 def run_list(args):
