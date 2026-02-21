@@ -7,12 +7,14 @@ from .base import BaseChecker
 from .winget import WingetChecker
 from .github import GitHubChecker
 from .custom import CustomChecker
+from .homebrew import HomebrewChecker
 
 __all__ = [
     "BaseChecker",
     "WingetChecker",
     "GitHubChecker",
     "CustomChecker",
+    "HomebrewChecker",
     "CheckerRegistry",
     "get_checker",
 ]
@@ -73,6 +75,7 @@ class CheckerRegistry:
 CheckerRegistry.register(AppSource.WINGET, WingetChecker)
 CheckerRegistry.register(AppSource.GITHUB, GitHubChecker)
 CheckerRegistry.register(AppSource.CUSTOM, CustomChecker)
+CheckerRegistry.register(AppSource.HOMEBREW, HomebrewChecker)
 
 
 def get_checker(source: AppSource) -> BaseChecker | None:

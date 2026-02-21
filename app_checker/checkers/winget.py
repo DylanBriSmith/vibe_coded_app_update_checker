@@ -181,19 +181,20 @@ class WingetChecker(BaseChecker):
             output: Raw JSON output from winget list.
             
         Returns:
-            List of dicts with app info.
+            List of dicts with app info including actual source.
         """
         try:
             data = json.loads(output)
             apps: list[dict[str, str]] = []
             
-            for source in data.get("Sources", []):
-                for pkg in source.get("Packages", []):
+            for source_data in data.get("Sources", []):
+                source_name = source_data.get("Source", "unknown")
+                for pkg in source_data.get("Packages", []):
                     apps.append({
                         "name": pkg.get("Name", ""),
                         "winget_id": pkg.get("Id", ""),
                         "installed_version": pkg.get("Version", ""),
-                        "source": "winget"
+                        "source": source_name,
                     })
                     
             return apps

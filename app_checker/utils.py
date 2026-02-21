@@ -12,10 +12,22 @@ from .models import App, AppSource
 
 logger = get_logger(__name__)
 
+_data_dir: Optional[Path] = None
+
+
+def set_data_dir(path: Path) -> None:
+    """Set a custom data directory path.
+    
+    Args:
+        path: The data directory path to use.
+    """
+    global _data_dir
+    _data_dir = path
+
 
 def get_data_dir() -> Path:
     """Get the data directory path."""
-    return DEFAULT_DATA_DIR
+    return _data_dir if _data_dir is not None else DEFAULT_DATA_DIR
 
 
 def get_apps_file() -> Path:

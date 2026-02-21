@@ -1,12 +1,13 @@
 """Main TUI Application for App Update Checker."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from textual.app import App
 
+from ..models import App, UpdateInfo
 from ..service import UpdateService, get_service
-from .screens import AddAppScreen, DetailScreen, MainScreen
+from .screens import AddAppScreen, DetailScreen, MainScreen, ScanScreen
 
 if TYPE_CHECKING:
     pass
@@ -17,6 +18,7 @@ SCREENS = {
     "main": MainScreen,
     "add-app": AddAppScreen,
     "detail": DetailScreen,
+    "scan": ScanScreen,
 }
 
 
@@ -44,7 +46,7 @@ class UpdateCheckerApp(App):
     def on_mount(self) -> None:
         self.push_screen("main")
 
-    async def check_app(self, app):
+    async def check_app(self, app: App) -> UpdateInfo:
         """Check a single app for updates.
 
         Args:
@@ -55,7 +57,7 @@ class UpdateCheckerApp(App):
         """
         return await self.service.check_app(app)
 
-    async def scan_installed_apps(self) -> list[dict]:
+    async def scan_installed_apps(self) -> list[dict[str, str]]:
         """Scan system for installed apps using winget.
 
         Returns:
@@ -63,7 +65,7 @@ class UpdateCheckerApp(App):
         """
         return await self.service.scan_installed_apps()
 
-    async def detect_version_patterns(self, url: str) -> list[dict]:
+    async def detect_version_patterns(self, url: str) -> list[dict[str, Any]]:
         """Detect version patterns from a URL.
 
         Args:
@@ -85,7 +87,7 @@ class UpdateCheckerApp(App):
         """
         return await self.service.validate_github_repo(repo)
 
-    async def search_winget(self, query: str) -> list[dict]:
+    async def search_winget(self, query: str) -> list[dict[str, str]]:
         """Search winget for packages.
 
         Args:

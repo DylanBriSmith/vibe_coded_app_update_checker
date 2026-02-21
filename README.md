@@ -4,10 +4,13 @@ A TUI application to check for updates to installed applications. No auto-updati
 
 ## Features
 
-- **Multiple update sources**: Winget (Windows), GitHub Releases, Custom URLs
-- **Interactive TUI**: Browse, filter, and manage tracked apps
-- **Auto-detect installed apps**: Scan Windows systems with `winget`
+- **Multiple update sources**: Winget (Windows), Homebrew (macOS), GitHub Releases, Custom URLs
+- **Interactive TUI**: Browse, filter, search, and manage tracked apps
+- **Smart scanning**: Auto-add winget/homebrew apps, interactive setup for others
+- **Desktop notifications**: Get notified when updates are available
+- **Cross-platform**: Windows (winget) and macOS (Homebrew) support
 - **Non-interactive mode**: CLI commands for scripting
+- **Export/Import**: Backup and restore your app list
 - **Concurrent checking**: Parallel update checks with configurable concurrency
 - **GitHub API token support**: Higher rate limits (5000 vs 60 req/hr)
 - **Data backup**: Automatic backup before overwriting data
@@ -36,6 +39,9 @@ python -m app_checker
 |-----|--------|
 | `R` | Refresh all apps |
 | `A` | Add new app |
+| `S` | Scan for installed apps |
+| `/` | Search/filter apps |
+| `Esc` | Clear search |
 | `I` | Toggle ignore |
 | `D` | Delete app |
 | `O` | Open release URL |
@@ -44,25 +50,24 @@ python -m app_checker
 ### CLI Commands
 
 ```bash
-# Scan for installed apps (Windows only, requires winget)
-python -m app_checker scan
+# Scan for installed apps
+python -m app_checker scan                    # Auto-add winget/homebrew apps
+python -m app_checker scan --interactive      # Prompt for non-native apps
+python -m app_checker scan --all              # Legacy: add all as winget source
 
 # Check for updates
-python -m app_checker check
-
-# Check with JSON output (for scripting)
-python -m app_checker check --json
+python -m app_checker check                   # Check for updates
+python -m app_checker check --notify          # Send desktop notification
+python -m app_checker check --json            # JSON output for scripting
 
 # List tracked apps
 python -m app_checker list
-
-# List with JSON output
 python -m app_checker list --json
 
 # Add apps manually
 python -m app_checker add --name "Obsidian" --source github --github-repo "obsidianmd/obsidian-releases"
+python -m app_checker add --name "wget" --source homebrew --homebrew-formula "wget"
 python -m app_checker add --name "7-Zip" --source custom --url "https://www.7-zip.org/download.html" --regex "7-Zip (\d+\.\d+)"
-python -m app_checker add --name "ShareX" --source github --github-repo "ShareX/ShareX" --installed-version "15.0.0"
 
 # Update app version
 python -m app_checker update --id <app-id> --installed-version "16.0.0"
@@ -70,11 +75,11 @@ python -m app_checker update --id <app-id> --installed-version "16.0.0"
 # Delete an app
 python -m app_checker delete --id <app-id>
 
-# Verbose logging
-python -m app_checker --verbose check
-
-# Log to file
-python -m app_checker --log-file app.log check
+# Export/Import
+python -m app_checker export > backup.json    # Export to stdout
+python -m app_checker export -f backup.json   # Export to file
+python -m app_checker import backup.json      # Import (replaces existing)
+python -m app_checker import backup.json --merge # Merge with existing
 ```
 
 ## Source Types
@@ -82,6 +87,7 @@ python -m app_checker --log-file app.log check
 | Source | Description | Required Fields |
 |--------|-------------|-----------------|
 | `winget` | Windows Package Manager | `--winget-id` |
+| `homebrew` | Homebrew (macOS) | `--homebrew-formula` |
 | `github` | GitHub Releases API | `--github-repo owner/repo` |
 | `custom` | Custom URL with regex | `--url`, optionally `--regex` |
 

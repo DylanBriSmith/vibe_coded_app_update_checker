@@ -11,6 +11,7 @@ class AppSource(Enum):
     WINGET = "winget"
     GITHUB = "github"
     CUSTOM = "custom"
+    HOMEBREW = "homebrew"
 
 
 class AppStatus(Enum):
@@ -39,6 +40,7 @@ class App:
     github_repo: Optional[str] = None
     custom_url: Optional[str] = None
     version_regex: Optional[str] = None
+    homebrew_formula: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -76,6 +78,7 @@ class App:
             "github_repo": self.github_repo,
             "custom_url": self.custom_url,
             "version_regex": self.version_regex,
+            "homebrew_formula": self.homebrew_formula,
         }
 
     @classmethod
@@ -116,6 +119,7 @@ class App:
             github_repo=_get_str("github_repo"),
             custom_url=_get_str("custom_url"),
             version_regex=_get_str("version_regex"),
+            homebrew_formula=_get_str("homebrew_formula"),
         )
 
 

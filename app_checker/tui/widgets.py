@@ -1,7 +1,7 @@
 """Custom widgets for the TUI."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -228,6 +228,6 @@ class AppDetail(Widget):
         else:
             return "[magenta]Unknown[/magenta]"
 
-    def update_app(self, app: App) -> None:
+    def update_app(self, app: Optional[App]) -> None:
         self.tracked_app = app
         self.refresh(recompose=True)

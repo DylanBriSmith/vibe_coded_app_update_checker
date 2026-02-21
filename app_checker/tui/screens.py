@@ -3,7 +3,7 @@
 import asyncio
 import webbrowser
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from textual import on
 from textual.app import ComposeResult
@@ -20,7 +20,6 @@ from textual.widgets import (
     RadioSet,
     RadioButton,
     Static,
-    TextArea,
 )
 
 from ..models import App, AppSource, AppStatus
@@ -38,16 +37,19 @@ class MainScreen(Screen):
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh"),
         ("a", "add_app", "Add App"),
+        ("s", "scan_apps", "Scan"),
         ("/", "search", "Search"),
         ("escape", "clear_search", "Clear"),
     ]
 
     apps: reactive[list[App]] = reactive([])
     is_checking: reactive[bool] = reactive(False)
+    search_query: reactive[str] = reactive("")
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(classes="main-container"):
+            yield Input(placeholder="Search apps... (press / to focus)", id="search-input")
             yield AppTable(id="app-table")
             with Container(classes="right-panel"):
                 yield AppDetail(id="app-detail")
@@ -64,9 +66,13 @@ class MainScreen(Screen):
         self._refresh_table()
 
     def _refresh_table(self) -> None:
-        """Refresh the app table."""
+        """Refresh the app table with optional search filter."""
         table = self.query_one("#app-table", AppTable)
-        table.update_apps(self.apps)
+        if self.search_query:
+            filtered = [a for a in self.apps if self.search_query.lower() in a.name.lower()]
+            table.update_apps(filtered)
+        else:
+            table.update_apps(self.apps)
 
     def _update_status_bar(self) -> None:
         """Update the status bar."""
@@ -77,6 +83,30 @@ class MainScreen(Screen):
         )
         status_bar.last_scan = datetime.now().strftime("%H:%M:%S")
 
+    @on(Input.Changed, "#search-input")
+    def on_search_changed(self, event: Input.Changed) -> None:
+        """Handle search input changes."""
+        self.search_query = event.value
+        self._refresh_table()
+
+    @on(Input.Submitted, "#search-input")
+    def on_search_submitted(self, event: Input.Submitted) -> None:
+        """Handle search submit - focus the table."""
+        table = self.query_one("#app-table", AppTable)
+        table.focus()
+
+    def action_search(self) -> None:
+        """Focus search input."""
+        search_input = self.query_one("#search-input", Input)
+        search_input.focus()
+
+    def action_clear_search(self) -> None:
+        """Clear search filter."""
+        search_input = self.query_one("#search-input", Input)
+        search_input.value = ""
+        self.search_query = ""
+        self._refresh_table()
+
     def action_refresh(self) -> None:
         """Refresh all apps."""
         if self.is_checking:
@@ -86,26 +116,32 @@ class MainScreen(Screen):
         self.app.call_later(self._check_all_apps)
 
     async def _check_all_apps(self) -> None:
-        """Check all apps for updates."""
-        checker_app: "UpdateCheckerApp" = self.app
-
-        for i, app in enumerate(self.apps):
-            self.apps[i].last_checked = datetime.now().isoformat()
-            self._refresh_table()
-
-            update_info = await checker_app.check_app(app)
-
-            if update_info.latest_version:
-                self.apps[i].latest_version = update_info.latest_version
-            if update_info.release_url:
-                self.apps[i].release_url = update_info.release_url
-            if update_info.error:
-                self.apps[i].last_error = update_info.error
-            else:
-                self.apps[i].last_error = None
-
-            self._refresh_table()
-
+        """Check all apps for updates concurrently."""
+        from .app import UpdateCheckerApp
+        
+        checker_app = cast(UpdateCheckerApp, self.app)
+        semaphore = asyncio.Semaphore(5)
+        
+        async def check_one(app: App, index: int) -> None:
+            async with semaphore:
+                self.apps[index].last_checked = datetime.now().isoformat()
+                info = await checker_app.check_app(app)
+                
+                self.apps[index].latest_version = info.latest_version
+                self.apps[index].release_url = info.release_url
+                self.apps[index].last_error = info.error
+                
+                self._refresh_table()
+        
+        tasks = [
+            check_one(app, i) 
+            for i, app in enumerate(self.apps) 
+            if not app.ignored
+        ]
+        
+        if tasks:
+            await asyncio.gather(*tasks)
+        
         save_apps(self.apps)
         self.is_checking = False
         self._update_status_bar()
@@ -114,13 +150,9 @@ class MainScreen(Screen):
         """Open add app screen."""
         self.app.push_screen("add-app")
 
-    def action_search(self) -> None:
-        """Focus search (placeholder for now)."""
-        pass
-
-    def action_clear_search(self) -> None:
-        """Clear search filter."""
-        self._refresh_table()
+    def action_scan_apps(self) -> None:
+        """Open scan screen."""
+        self.app.push_screen("scan")
 
     @on(AppTable.AppSelected)
     def on_app_selected(self, event: AppTable.AppSelected) -> None:
@@ -196,9 +228,10 @@ class AddAppScreen(ModalScreen):
             
             yield Label("Source Type:")
             with RadioSet(id="source-type"):
-                yield RadioButton("Winget (auto-detect from system)", value=True, id="source-winget")
+                yield RadioButton("Winget (Windows)", value=True, id="source-winget")
                 yield RadioButton("GitHub Releases", id="source-github")
                 yield RadioButton("Custom URL", id="source-custom")
+                yield RadioButton("Homebrew (macOS)", id="source-homebrew")
             
             with Container(id="winget-options", classes="source-options"):
                 yield Label("Winget ID (optional, will search if empty):")
@@ -219,6 +252,11 @@ class AddAppScreen(ModalScreen):
                 with VerticalScroll(id="detected-patterns"):
                     yield Static("", id="detection-result")
             
+            with Container(id="homebrew-options", classes="source-options hidden"):
+                yield Label("Homebrew Formula:")
+                yield Input(placeholder="e.g., wget or homebrew/cask/spotify", id="homebrew-formula")
+                yield Button("Search Homebrew", id="search-homebrew", variant="primary")
+            
             with Horizontal(classes="button-row"):
                 yield Button("Cancel", id="cancel-btn", variant="default")
                 yield Button("Add App", id="add-btn", variant="success")
@@ -235,6 +273,8 @@ class AddAppScreen(ModalScreen):
             self.selected_source = "github"
         elif radio_id == "source-custom":
             self.selected_source = "custom"
+        elif radio_id == "source-homebrew":
+            self.selected_source = "homebrew"
         
         self._update_source_options()
 
@@ -243,10 +283,12 @@ class AddAppScreen(ModalScreen):
         winget_opts = self.query_one("#winget-options")
         github_opts = self.query_one("#github-options")
         custom_opts = self.query_one("#custom-options")
+        homebrew_opts = self.query_one("#homebrew-options")
 
         winget_opts.set_class(self.selected_source != "winget", "hidden")
         github_opts.set_class(self.selected_source != "github", "hidden")
         custom_opts.set_class(self.selected_source != "custom", "hidden")
+        homebrew_opts.set_class(self.selected_source != "homebrew", "hidden")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
@@ -261,9 +303,13 @@ class AddAppScreen(ModalScreen):
             await self._validate_github()
         elif button_id == "search-winget":
             await self._search_winget()
+        elif button_id == "search-homebrew":
+            await self._search_homebrew()
 
     async def _auto_detect_version(self) -> None:
         """Auto-detect version patterns from URL."""
+        from .app import UpdateCheckerApp
+        
         url_input = self.query_one("#custom-url", Input)
         url = url_input.value.strip()
 
@@ -273,7 +319,7 @@ class AddAppScreen(ModalScreen):
         result_widget = self.query_one("#detection-result", Static)
         result_widget.update("[cyan]Detecting version patterns...[/cyan]")
 
-        checker_app: "UpdateCheckerApp" = self.app
+        checker_app = cast(UpdateCheckerApp, self.app)
         patterns = await checker_app.detect_version_patterns(url)
 
         if patterns:
@@ -292,13 +338,15 @@ class AddAppScreen(ModalScreen):
 
     async def _validate_github(self) -> None:
         """Validate GitHub repository."""
+        from .app import UpdateCheckerApp
+        
         repo_input = self.query_one("#github-repo", Input)
         repo = repo_input.value.strip()
 
         if not repo:
             return
 
-        checker_app: "UpdateCheckerApp" = self.app
+        checker_app = cast(UpdateCheckerApp, self.app)
         is_valid, error = await checker_app.validate_github_repo(repo)
 
         if is_valid:
@@ -308,6 +356,8 @@ class AddAppScreen(ModalScreen):
 
     async def _search_winget(self) -> None:
         """Search winget for package."""
+        from .app import UpdateCheckerApp
+        
         name_input = self.query_one("#app-name", Input)
         name = name_input.value.strip()
 
@@ -317,13 +367,34 @@ class AddAppScreen(ModalScreen):
         winget_input = self.query_one("#winget-id", Input)
         winget_input.value = "[Searching...]"
 
-        checker_app: "UpdateCheckerApp" = self.app
+        checker_app = cast(UpdateCheckerApp, self.app)
         results = await checker_app.search_winget(name)
 
         if results:
             winget_input.value = results[0].get("id", "")
         else:
             winget_input.value = ""
+
+    async def _search_homebrew(self) -> None:
+        """Search Homebrew for formula."""
+        from ..checkers.homebrew import HomebrewChecker
+        
+        name_input = self.query_one("#app-name", Input)
+        name = name_input.value.strip()
+
+        if not name:
+            return
+
+        formula_input = self.query_one("#homebrew-formula", Input)
+        formula_input.value = "[Searching...]"
+
+        checker = HomebrewChecker()
+        results = await checker.search_formula(name)
+
+        if results:
+            formula_input.value = results[0].get("homebrew_formula", "")
+        else:
+            formula_input.value = ""
 
     def _add_app(self) -> None:
         """Add the new app."""
@@ -333,7 +404,7 @@ class AddAppScreen(ModalScreen):
         if not name:
             return
 
-        app_data = {
+        app_data: dict[str, Any] = {
             "name": name,
             "source": self.selected_source,
         }
@@ -345,7 +416,7 @@ class AddAppScreen(ModalScreen):
 
         if self.selected_source == "winget":
             winget_input = self.query_one("#winget-id", Input)
-            app_data["winget_id"] = winget_input.value.strip() or None
+            app_data["winget_id"] = winget_input.value.strip() or None  # type: ignore[misc]
 
         elif self.selected_source == "github":
             repo_input = self.query_one("#github-repo", Input)
@@ -355,7 +426,11 @@ class AddAppScreen(ModalScreen):
             url_input = self.query_one("#custom-url", Input)
             regex_input = self.query_one("#version-regex", Input)
             app_data["custom_url"] = url_input.value.strip()
-            app_data["version_regex"] = regex_input.value.strip() or None
+            app_data["version_regex"] = regex_input.value.strip() or None  # type: ignore[misc]
+
+        elif self.selected_source == "homebrew":
+            formula_input = self.query_one("#homebrew-formula", Input)
+            app_data["homebrew_formula"] = formula_input.value.strip()
 
         app = App.from_dict(app_data)
         add_app(app)
@@ -435,4 +510,124 @@ class DetailScreen(ModalScreen):
                 webbrowser.open(self.app_obj.release_url)
 
     def action_close(self) -> None:
+        self.app.pop_screen()
+
+
+class ScanScreen(ModalScreen):
+    """Modal screen for scanning installed apps."""
+
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    scanned_apps: reactive[list[dict]] = reactive([])
+    is_scanning: reactive[bool] = reactive(False)
+    selected_apps: reactive[set[int]] = reactive(set)
+
+    def compose(self) -> ComposeResult:
+        with Container(classes="scan-container"):
+            yield Label("Scan Installed Applications", classes="screen-title")
+            yield Static(
+                "Scan your system for installed applications and add them to tracking.",
+                classes="scan-description"
+            )
+            with Horizontal(classes="scan-controls"):
+                yield Button("Start Scan", id="start-scan-btn", variant="primary")
+                yield Button("Add Selected", id="add-selected-btn", variant="success", disabled=True)
+            with VerticalScroll(id="scan-results"):
+                yield Static("", id="scan-status")
+                yield Static("", id="scan-list")
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "start-scan-btn":
+            await self._start_scan()
+        elif event.button.id == "add-selected-btn":
+            await self._add_selected()
+        elif event.button.id == "close-btn":
+            self.app.pop_screen()
+
+    async def _start_scan(self) -> None:
+        """Start scanning for installed apps."""
+        from .app import UpdateCheckerApp
+        
+        self.is_scanning = True
+        self.selected_apps = set()
+        
+        status_widget = self.query_one("#scan-status", Static)
+        list_widget = self.query_one("#scan-list", Static)
+        add_btn = self.query_one("#add-selected-btn", Button)
+        add_btn.disabled = True
+        
+        status_widget.update("[cyan]Scanning for installed applications...[/cyan]")
+        list_widget.update("")
+        
+        checker_app = cast(UpdateCheckerApp, self.app)
+        apps = await checker_app.scan_installed_apps()
+        
+        self.scanned_apps = apps
+        self.is_scanning = False
+        
+        if not apps:
+            status_widget.update("[yellow]No apps found or winget not available.[/yellow]")
+            return
+        
+        winget_apps = [a for a in apps if a.get("source") == "winget"]
+        other_apps = [a for a in apps if a.get("source") != "winget"]
+        
+        status_widget.update(
+            f"[green]Found {len(apps)} apps:[/green] "
+            f"{len(winget_apps)} from winget, {len(other_apps)} from other sources"
+        )
+        
+        lines = ["", "[bold]Winget apps (auto-trackable):[/bold]", ""]
+        for i, app in enumerate(apps):
+            source = app.get("source", "unknown")
+            source_style = "green" if source == "winget" else "yellow"
+            marker = "○" if source == "winget" else "◌"
+            lines.append(
+                f"  {marker} [{source_style}]{app.get('name', 'Unknown')}[/{source_style}] "
+                f"({app.get('winget_id', 'N/A')}) v{app.get('installed_version', '?')} "
+                f"[dim][{source}][/dim]"
+            )
+        
+        list_widget.update("\n".join(lines))
+        add_btn.disabled = False
+
+    async def _add_selected(self) -> None:
+        """Add all winget apps to tracking."""
+        status_widget = self.query_one("#scan-status", Static)
+        
+        existing_apps = load_apps()
+        existing_ids = {app.winget_id for app in existing_apps if app.winget_id}
+        
+        added = 0
+        skipped = 0
+        
+        for app_data in self.scanned_apps:
+            if app_data.get("source") != "winget":
+                continue
+            
+            winget_id = app_data.get("winget_id", "")
+            if winget_id in existing_ids:
+                skipped += 1
+                continue
+            
+            new_app = App(
+                name=app_data.get("name", ""),
+                source=AppSource.WINGET,
+                installed_version=app_data.get("installed_version"),
+                winget_id=winget_id,
+            )
+            add_app(new_app)
+            added += 1
+        
+        other_count = sum(1 for a in self.scanned_apps if a.get("source") != "winget")
+        
+        status_widget.update(
+            f"[green]Added {added} apps to tracking.[/green] "
+            f"Skipped {skipped} already tracked. "
+            f"{other_count} non-winget apps require manual setup."
+        )
+        
+        self.query_one("#add-selected-btn", Button).disabled = True
+
+    def action_cancel(self) -> None:
         self.app.pop_screen()

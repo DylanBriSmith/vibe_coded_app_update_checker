@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import datetime
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, Optional
 
 from .checkers import get_checker
 from .constants import MAX_CONCURRENT_CHECKS
