@@ -3,9 +3,9 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from textual.app import App
+from textual.app import App as TextualApp
 
-from ..models import App, UpdateInfo
+from ..models import App as AppModel, UpdateInfo
 from ..service import UpdateService, get_service
 from .screens import AddAppScreen, DetailScreen, MainScreen, ScanScreen
 
@@ -22,7 +22,7 @@ SCREENS = {
 }
 
 
-class UpdateCheckerApp(App):
+class UpdateCheckerApp(TextualApp):
     """Main TUI application for checking app updates."""
 
     CSS_PATH = CSS_PATH
@@ -46,7 +46,7 @@ class UpdateCheckerApp(App):
     def on_mount(self) -> None:
         self.push_screen("main")
 
-    async def check_app(self, app: App) -> UpdateInfo:
+    async def check_app(self, app: AppModel) -> UpdateInfo:
         """Check a single app for updates.
 
         Args:
